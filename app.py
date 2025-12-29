@@ -17,27 +17,49 @@ def load_whisper_model():
 model = load_whisper_model()
 
 def clean_text(text):
-    """Removes punctuation and extra spaces for cleaner IPA conversion."""
+    """Removes punctuation for cleaner IPA conversion."""
     return re.sub(r'[^\w\s]', '', text).lower().strip()
+
+def get_highlighted_ipa(target_ipa, user_ipa):
+    """Compares two IPA strings and highlights the user's mistakes in red."""
+    result = ""
+    # SequenceMatcher finds the differences between the two strings
+    matcher = difflib.SequenceMatcher(None, target_ipa, user_ipa)
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # Matching parts are displayed normally
+            result += user_ipa[j1:j2]
+        elif tag in ('replace', 'insert'):
+            # Mistaken or extra sounds are highlighted in red
+            result += f'<span style="color:red; font-weight:bold;">{user_ipa[j1:j2]}</span>'
+        elif tag == 'delete':
+            # Missing sounds are indicated with a red placeholder
+            result += '<span style="color:red; font-weight:bold;">_</span>'
+            
+    return result
 
 def get_phonetic_feedback(target_text, user_audio_path):
     # 1. Transcribe User Audio
     result = model.transcribe(user_audio_path)
     user_text = clean_text(result['text'])
     
-    # 2. Convert to IPA (Cleaned versions)
+    # 2. Convert to IPA
     target_clean = clean_text(target_text)
     target_ipa = ipa.convert(target_clean)
     user_ipa = ipa.convert(user_text)
     
-    # 3. Calculate Similarity
-    score = difflib.SequenceMatcher(None, target_ipa, user_ipa).ratio()
-    return user_text, target_ipa, user_ipa, int(score * 100)
+    # 3. Calculate Score
+    score = int(difflib.SequenceMatcher(None, target_ipa, user_ipa).ratio() * 100)
+    
+    # 4. Generate highlighted version of User IPA
+    highlighted_user_ipa = get_highlighted_ipa(target_ipa, user_ipa)
+    
+    return user_text, target_ipa, highlighted_user_ipa, score
 
 # --- UI Layout ---
 st.title("🗣️ AI Pronunciation Coach")
 
-# Use session state to track which sentence we are working on
 if 'current_sentence' not in st.session_state:
     st.session_state.current_sentence = ""
 
@@ -47,7 +69,6 @@ target_sentence = st.text_input("Target Sentence:", "The quick brown fox jumps o
 sentence_changed = target_sentence != st.session_state.current_sentence
 
 if target_sentence:
-    # Update state
     st.session_state.current_sentence = target_sentence
     
     # 1. Reference Audio
@@ -59,43 +80,42 @@ if target_sentence:
     with col1:
         st.subheader("1. Reference")
         st.audio(audio_fp, format="audio/mp3")
-        # Display IPA without the trailing period
         clean_target = clean_text(target_sentence)
         st.info(f"Target IPA: `{ipa.convert(clean_target)}`")
 
     # 2. User Recording
     with col2:
         st.subheader("2. Your Turn")
-        # If sentence changed, we show a fresh input
-        # Adding a unique key based on the sentence ensures the widget resets
         user_audio = st.audio_input("Record your voice", key=f"audio_{target_sentence}")
 
-    # Only run analysis if there is audio AND it's not a leftover from a previous sentence
+    # 3. Analysis Logic
     if user_audio and not sentence_changed:
         with open("temp_audio.wav", "wb") as f:
             f.write(user_audio.getbuffer())
         
-        with st.spinner("Analyzing..."):
-            heard_text, t_ipa, u_ipa, score = get_phonetic_feedback(target_sentence, "temp_audio.wav")
+        with st.spinner("Comparing sounds..."):
+            heard_text, t_ipa, h_u_ipa, score = get_phonetic_feedback(target_sentence, "temp_audio.wav")
             
             st.divider()
             st.header(f"Score: {score}/100")
             
-            # Use columns for a nice side-by-side IPA view
-            res_col1, res_col2 = st.columns(2)
-            res_col1.metric("Target IPA", t_ipa)
-            res_col2.metric("Your IPA", u_ipa)
+            # Displaying Comparison
+            st.write("**Phonetic Feedback (Red = Mistake):**")
+            st.markdown(f"Target: `{t_ipa}`")
+            # We use unsafe_allow_html to show the red color tags
+            st.markdown(f"Yours: &nbsp; `{h_u_ipa}`", unsafe_allow_html=True)
             
             st.write(f"**I heard:** \"{heard_text}\"")
             
             if score > 85:
-                st.success("Excellent pronunciation!")
+                st.success("Excellent! Almost native.")
             elif score > 60:
-                st.warning("Good, but try to be clearer.")
+                st.warning("Good, but notice the red highlights.")
             else:
-                st.error("Needs more practice.")
+                st.error("Keep practicing. Try to match the target sounds exactly.")
 
         if os.path.exists("temp_audio.wav"):
             os.remove("temp_audio.wav")
+            
     elif sentence_changed:
-        st.light_bulb("New sentence detected. Please record your voice for the new target!")
+        st.info("New sentence detected. Please record your voice for the new target!")
