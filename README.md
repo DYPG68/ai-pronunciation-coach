@@ -57,7 +57,7 @@ Try the app right now! No installation needed.
     ```bash
     git clone https://github.com/DYPG68/ai-pronunciation-coach.git
     cd ai-pronunciation-coach
-    python -m venv venv
+    py -m venv venv
     venv\Scripts\activate # Windows
     source venv/bin/activate # Mac/Linux
     ```
